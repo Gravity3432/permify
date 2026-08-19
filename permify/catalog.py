@@ -36,16 +36,20 @@ def track_from_api(item: dict, liked: bool = False) -> Optional[Track]:
     # The wrapper carries the 'added on' timestamp for playlist/library
     # entries: e.g. {'added_at': '2021-05-04T12:00:00Z', 'item': {...}}.
     added_at = item.get("added_at") if isinstance(item, dict) else None
+    artists_raw = t.get("artists") or []
     return Track(
         id=t["id"],
         uri=t.get("uri", f"spotify:track:{t['id']}"),
         name=t.get("name", "?"),
-        artists=", ".join(a.get("name", "") for a in t.get("artists", [])),
+        artists=", ".join(a.get("name", "") for a in artists_raw),
         album=album.get("name", ""),
         duration_ms=t.get("duration_ms") or 0,
         image_url=image_url,
         liked=liked,
         added_at=added_at,
+        artist_uris=[a.get("uri", "") for a in artists_raw],
+        artist_ids=[a.get("id", "") for a in artists_raw],
+        album_uri=album.get("uri", ""),
     )
 
 
@@ -294,15 +298,19 @@ class Catalog:
             for t in items:
                 if not t or not t.get("id"):
                     continue
+                artists_raw = t.get("artists") or []
                 out.append(
                     Track(
                         id=t["id"],
                         uri=t.get("uri", f"spotify:track:{t['id']}"),
                         name=t.get("name", "?"),
-                        artists=", ".join(a.get("name", "") for a in t.get("artists", [])),
+                        artists=", ".join(a.get("name", "") for a in artists_raw),
                         album=getattr(album_meta, "name", "") or "",
                         duration_ms=t.get("duration_ms") or 0,
                         image_url=getattr(album_meta, "image_url", None),
+                        artist_uris=[a.get("uri", "") for a in artists_raw],
+                        artist_ids=[a.get("id", "") for a in artists_raw],
+                        album_uri=getattr(album_meta, "uri", ""),
                     )
                 )
             offset += len(items)
@@ -312,6 +320,63 @@ class Catalog:
         return out
 
     # -- listening history & taste ---------------------------------------
+    def artist_albums(self, artist_id: str, artist_meta=None,
+                      cap: int = 50) -> List[Album]:
+        """Albums + singles for an artist (for the artist page)."""
+        out: List[Album] = []
+        try:
+            items = self.sp.artist_albums(artist_id, limit=cap)
+        except Exception:
+            items = []
+        for a in (items or {}).get("items") or []:
+            if not a or not a.get("id"):
+                continue
+            imgs = a.get("images") or []
+            rel = a.get("release_date", "") or ""
+            out.append(Album(
+                id=a["id"],
+                uri=a.get("uri", ""),
+                name=a.get("name", "?"),
+                artists=", ".join(x.get("name", "") for x in a.get("artists", [])),
+                image_url=imgs[0].get("url") if imgs else None,
+                year=rel[:4],
+            ))
+        return out
+
+    def artist_info(self, artist) -> Artist:
+        """Full artist record (with follower count)."""
+        try:
+            raw = self.sp.artist(getattr(artist, "id", artist) if isinstance(artist, str) else artist.id)
+        except Exception:
+            return artist if isinstance(artist, Artist) else Artist("", "", str(artist))
+        imgs = raw.get("images") or []
+        return Artist(
+            id=raw.get("id", getattr(artist, "id", "")),
+            uri=raw.get("uri", getattr(artist, "uri", "")),
+            name=raw.get("name", getattr(artist, "name", "?")),
+            image_url=imgs[0].get("url") if imgs else getattr(artist, "image_url", None),
+            followers=(raw.get("followers") or {}).get("total", 0),
+        )
+
+    def follow_artist(self, artist, flag: bool) -> bool:
+        """Follow (flag=True) or unfollow (flag=False) an artist."""
+        try:
+            aid = getattr(artist, "id", None) or artist
+            if flag:
+                self.sp.user_follow_artists([aid])
+            else:
+                self.sp.user_unfollow_artists([aid])
+            return True
+        except Exception:
+            return False
+
+    def is_following_artist(self, artist) -> bool:
+        try:
+            aid = getattr(artist, "id", None) or artist
+            return bool((self.sp.user_follows_artists([aid]) or [False])[0])
+        except Exception:
+            return False
+
     def recently_played(self, cap: int = 30) -> List[Track]:
         page = self.sp.current_user_recently_played(limit=min(50, cap))
         items = (page or {}).get("items") or []

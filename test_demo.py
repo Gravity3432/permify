@@ -10,7 +10,7 @@ from permify.gui import _fmt
 def test_demo_engine():
     e = DemoEngine()
     pls = e.get_playlists()
-    assert len(pls) == 1 and pls[0].name == "Demo Mix"
+    assert len(pls) >= 1 and pls[0].name == "Demo Mix"
     tracks = e.get_playlist_tracks(pls[0])
     assert len(tracks) >= 7
     e.play_tracks(tracks, 0, "Demo Mix")
@@ -23,6 +23,13 @@ def test_demo_engine():
     assert e.repeat_cycle() == "context"
     assert e.search("neon") or e.search("sunset")
     assert e.me_name() == "demo listener"
+    # rich data for the revamped GUI
+    t = e.search("neon")[0]
+    assert t.artist_uris and t.album_uri
+    assert len(e.top_artists()) > 0
+    assert e.artist_albums(e.top_artists()[0])
+    assert e.lyrics_for(t)["lines"]
+    assert e.devices()
     print("PASS demo engine")
 
 

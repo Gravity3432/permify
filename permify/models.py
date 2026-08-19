@@ -15,6 +15,9 @@ class Track:
     image_url: Optional[str] = None
     liked: bool = False
     added_at: Optional[str] = None  # "YYYY-MM-DDTHH:MM:SSZ" (Spotify)
+    artist_uris: List[str] = field(default_factory=list)
+    artist_ids: List[str] = field(default_factory=list)
+    album_uri: str = ""
 
     @property
     def duration_text(self) -> str:
@@ -46,6 +49,7 @@ class Artist:
     uri: str
     name: str
     image_url: Optional[str] = None
+    followers: int = 0
 
 
 @dataclass
