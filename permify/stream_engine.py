@@ -449,7 +449,7 @@ class StreamEngine:
 
     @property
     def device_label(self) -> str:
-        return f"{self.cfg.get('device_name', 'Termify')} (this app)"
+        return f"{self.cfg.get('device_name', 'Permify')} (this app)"
 
     # ----------------------------------------------------------- catalog
     def get_playlists(self):

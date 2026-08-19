@@ -152,7 +152,7 @@ class RemoteEngine:
         msg = str(exc)
         # --- authentication / token problems --------------------------
         if status == 401 or "token" in msg.lower() or "auth" in msg.lower():
-            return ("login expired - run:  python -m termify --setup  "
+            return ("login expired - run:  python -m permify --setup  "
                     "(or re-run it) to reconnect Spotify")
         if status == 403:
             return "spotify said no (a Premium account is required)"

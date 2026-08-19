@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-import time
 
 from . import __version__
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from typing import Dict, List, Optional
 
-from .models import Playlist, Track
+from .models import Album, Artist, Playlist, Track
 
 
 def track_from_api(item: dict, liked: bool = False) -> Optional[Track]:
@@ -216,7 +216,6 @@ class Catalog:
 
     def search_all(self, query: str, per: int = 10) -> dict:
         """Spotify-style rich search: artists, albums, playlists AND tracks."""
-        from .models import Album, Artist
 
         per = max(1, min(self.SEARCH_MAX, per))
         out = {"artists": [], "albums": [], "playlists": [], "tracks": []}
@@ -328,9 +327,7 @@ class Catalog:
         self.annotate_liked(out)
         return out
 
-    def top_artists(self, limit: int = 12) -> List["Artist"]:
-        from .models import Artist
-
+    def top_artists(self, limit: int = 12) -> List[Artist]:
         res = self.sp.current_user_top_artists(limit=limit, time_range="long_term")
         out: List[Artist] = []
         for a in (res or {}).get("items") or []:
@@ -364,7 +361,7 @@ class Catalog:
         body = {
             "name": name,
             "public": False,
-            "description": "made in termify - terminal client by @johnthemailboy",
+            "description": "made in permify - windowed player by @johnthemailboy",
         }
         try:
             resp = self._request(

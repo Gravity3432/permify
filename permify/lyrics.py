@@ -106,7 +106,7 @@ def fetch_lyrics(track) -> dict:
                 # lrclib wants seconds and gets grumpy if it's off by >2s
                 "duration": max(1, round((track.duration_ms or 0) / 1000)),
             },
-            headers={"User-Agent": "termify/0.1 (personal client by @johnthemailboy)"},
+            headers={"User-Agent": "permify/0.1 (personal client by @johnthemailboy)"},
             timeout=8,
         )
         if resp.status_code == 200:

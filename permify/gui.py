@@ -6,7 +6,6 @@ the terminal clients, so playback is battle-tested. Distinct visual identity.
 from __future__ import annotations
 
 import threading
-from typing import Optional
 
 from .models import Snapshot
 

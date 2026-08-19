@@ -26,7 +26,7 @@ DEFAULTS: Dict[str, Any] = {
     "client_id": "",
     "theme": "aurora",
     "layout": "revamp",       # revamp | classic
-    "device_name": "Termify",
+    "device_name": "Permify",
     "volume": 60,
     "quality": "high",          # normal | high | very_high  (audio quality of the embedded player)
     "mode": "auto",             # auto | stream | remote

@@ -11,18 +11,22 @@ import zipfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "permify-release.zip")
 
-# files a normal user actually interacts with, shown at the top level
+# files a normal user actually interacts with, shown at the top level.
+# run.bat and build.bat NEED requirements.txt / entry.py / permify.spec
+# to be here so they work straight out of the extracted zip.
 USER_FILES = [
     "README.md",
     "run.bat",      # Windows: just double-click
     "run.sh",       # mac/linux
     "build.bat",    # optional: make a standalone .exe
+    "requirements.txt",  # needed by run.bat + build.bat
+    "entry.py",          # needed by build.bat (PyInstaller entry point)
+    "permify.spec",      # needed by build.bat (PyInstaller config)
     "LICENSE",
 ]
-# things only developers/builders need -> hidden in dev/
+# things only developers need -> hidden in dev/
 DEV_FILES = [
-    "permify.spec", "entry.py", "pyproject.toml",
-    "requirements.txt", "test_demo.py", "make_release.py",
+    "pyproject.toml", "test_demo.py", "make_release.py",
 ]
 
 

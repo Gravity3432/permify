@@ -8,7 +8,7 @@ from typing import Callable, Optional
 
 from . import config
 
-log = logging.getLogger("termify.auth")
+log = logging.getLogger("permify.auth")
 
 OGG_MAGIC = b"OggS"  # capture pattern every real OGG stream starts with
 
@@ -54,13 +54,13 @@ class _ChainStream:
         self._rest = None
 
 SUCCESS_HTML = """
-<html><head><title>Termify</title><style>
+<html><head><title>Permify</title><style>
 body{background:#0b0b12;color:#e6e6f0;font-family:monospace;display:flex;
 align-items:center;justify-content:center;height:100vh;margin:0}
 div{text-align:center;border:1px solid #47e08b;padding:32px 48px;border-radius:8px}
 h1{color:#47e08b;letter-spacing:4px}
 </style></head>
-<body><div><h1>&#9835; TERMIFY</h1><p>Connected! You can close this tab<br>
+<body><div><h1>&#9835; PERMIFY</h1><p>Connected! You can close this tab<br>
 and go back to your terminal.</p></div></body></html>
 """
 
@@ -71,7 +71,7 @@ def build_spotify_client(cfg, interactive: bool = True):
     """Return an authenticated spotipy client.
 
     First run: opens a browser (PKCE flow) and asks Spotify for a token,
-    cached under ~/.termify so you only do this once.
+    cached under ~/.permify so you only do this once.
     """
     import spotipy
     from spotipy.oauth2 import SpotifyPKCE
@@ -93,11 +93,11 @@ def build_spotify_client(cfg, interactive: bool = True):
 
 def prompt_client_id() -> str:
     print()
-    print("  Termify needs a (free) Spotify Developer \"Client ID\":")
+    print("  Permify needs a (free) Spotify Developer \"Client ID\":")
     print()
     print("   1. Go to  https://developer.spotify.com/dashboard  and log in")
     print("   2. Click       Create app")
-    print(f"      Name:       termify            (anything)")
+    print("      Name:       permify            (anything)")
     print(f"      Redirect URI:  {config.REDIRECT_URI}")
     print("      (Important: add it exactly like that, then Save)")
     print("   3. Open the app's Settings and copy the  Client ID")
@@ -176,7 +176,7 @@ class CoreSession:
                 .build()
             )
             builder = Session.Builder(conf)
-            builder.set_device_name(str(self._cfg.get("device_name", "Termify")))
+            builder.set_device_name(str(self._cfg.get("device_name", "Permify")))
             have_creds = config.LIBCRED_FILE.exists()
             if not have_creds:
                 self._status("first-time audio login…")

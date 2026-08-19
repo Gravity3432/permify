@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "permify"
-version = "0.1.0"
+version = "0.1.2"
 description = "A windowed Spotify player - a real desktop app for your music."
 readme = "README.md"
 requires-python = ">=3.10"
