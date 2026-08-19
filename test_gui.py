@@ -189,6 +189,8 @@ def test_gui_builds_and_runs():
     # render paths
     app._fill_library([])
     app._fill_home([], [])
+    app._show_library_list(engine.get_liked(), "Liked Songs", None, 4)
+    app._play_lib_list()
     # search categories
     app.search_entry.delete(0, "end")
     app.search_entry.insert(0, "neon")

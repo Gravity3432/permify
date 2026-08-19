@@ -204,9 +204,35 @@ class PermifyGUI:
         self._search_cat("All", redraw=False)
 
     def _build_library(self, f) -> None:
+        import tkinter as tk
         self.library_grid = ui.TileGrid(f, cols=5, tile_size=120)
         self.library_grid.pack(fill="both", expand=True, padx=20, pady=12)
-        self._library_list = None
+
+        # playlist detail view: banner (cover + name + play) + track list
+        self._lib_view = tk.Frame(f, bg=ui.BG)
+        bhead = tk.Frame(self._lib_view, bg=ui.BG)
+        bhead.pack(fill="x", padx=20, pady=(16, 8))
+        self.lib_banner_cover = ui._ImageView(bhead, 96, seed="pl", bg=ui.BG)
+        self.lib_banner_cover.grid(row=0, column=0, rowspan=2, padx=(0, 16))
+        binfo = tk.Frame(bhead, bg=ui.BG)
+        binfo.grid(row=0, column=1, sticky="w")
+        tk.Label(binfo, text="PLAYLIST", bg=ui.BG, fg=ui.ACCENT,
+                 font=(ui.FONT, 9, "bold")).pack(anchor="w")
+        self.lib_banner_title = tk.Label(binfo, text="", bg=ui.BG, fg=ui.TEXT,
+                                         font=(ui.FONT, 20, "bold"), anchor="w")
+        self.lib_banner_title.pack(anchor="w")
+        self.lib_banner_meta = tk.Label(binfo, text="", bg=ui.BG, fg=ui.MUTED,
+                                        font=(ui.FONT, 11), anchor="w")
+        self.lib_banner_meta.pack(anchor="w")
+        tk.Button(binfo, text="▶  Play", bg=ui.ACCENT, fg=ui.ACCENT_TEXT, bd=0,
+                  font=(ui.FONT, 10, "bold"), activebackground=ui.ACCENT_DIM,
+                  command=self._play_lib_list).pack(anchor="w", pady=(8, 0))
+        self._lib_list = ui.TrackList(self._lib_view)
+        self._lib_list.pack(fill="both", expand=True, padx=20, pady=(0, 12))
+        self._lib_list.on_play = self._play_track
+        self._lib_list.on_artist = self._open_artist
+        self._lib_list.on_like = self._like_track
+        self._lib_list_data = []
 
     def _build_queue(self, f) -> None:
         import tkinter as tk
@@ -493,10 +519,30 @@ class PermifyGUI:
         threading.Thread(target=work, daemon=True).start()
 
     def _show_library_grid(self):
-        if getattr(self, "_library_list", None):
-            self._library_list.pack_forget()
-            self._library_list = None
+        try:
+            self._lib_view.pack_forget()
+        except Exception:
+            pass
         self.library_grid.pack(fill="both", expand=True, padx=20, pady=12)
+
+    def _show_library_list(self, tracks, title, cover_url, count):
+        self.library_grid.pack_forget()
+        self._lib_view.pack(fill="both", expand=True)
+        self.lib_banner_title.config(text=title)
+        self.lib_banner_meta.config(text=f"{count} tracks")
+        self.images.attach(self.lib_banner_cover, cover_url, 96)
+        self._lib_list_data = list(tracks)
+        self._lib_list.set_items(tracks, self.images)
+
+    def _play_lib_list(self):
+        tracks = getattr(self, "_lib_list_data", [])
+        if tracks:
+            def work():
+                try:
+                    self.engine.play_tracks(tracks, 0, self.lib_banner_title["text"])
+                except Exception:
+                    pass
+            threading.Thread(target=work, daemon=True).start()
 
     def _fill_library(self, pls):
         self._playlists = pls
@@ -528,20 +574,17 @@ class PermifyGUI:
             try:
                 if pl == "liked":
                     tracks = self.engine.get_liked()
+                    cover = None
+                    count = len(tracks)
                 else:
                     tracks = self.engine.get_playlist_tracks(pl)
+                    cover = getattr(pl, "image_url", None)
+                    count = getattr(pl, "count", None) or len(tracks)
             except Exception:
-                tracks = []
+                tracks, cover, count = [], None, len(tracks) if 'tracks' in dir() else 0
             def fill():
                 self.switch_tab("Library")
-                self.library_grid.pack_forget()
-                tl = ui.TrackList(self.panels["Library"])
-                tl.pack(fill="both", expand=True, padx=20, pady=12)
-                tl.on_play = self._play_track
-                tl.on_artist = self._open_artist
-                tl.on_like = self._like_track
-                self._library_list = tl
-                tl.set_items(tracks, self.images)
+                self._show_library_list(tracks, name, cover, count)
             self.root.after(0, fill)
         threading.Thread(target=work, daemon=True).start()
 
