@@ -26,7 +26,7 @@ USER_FILES = [
 ]
 # things only developers need -> hidden in dev/
 DEV_FILES = [
-    "pyproject.toml", "test_demo.py", "make_release.py",
+    "pyproject.toml", "test_demo.py", "test_gui.py", "make_release.py",
 ]
 
 
