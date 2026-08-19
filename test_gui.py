@@ -112,6 +112,8 @@ class _Base:
         return 300
     def winfo_height(self, *a, **k):
         return 200
+    def canvasy(self, *a, **k):
+        return 0
     def winfo_children(self, *a, **k):
         return []
     def create_rectangle(self, *a, **k):

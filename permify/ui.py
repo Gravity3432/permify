@@ -1,13 +1,14 @@
 """Reusable high-performance UI widgets for Permify.
 
-- ImageCache: async, cached album/cover art loading with an automatic
-  gradient fallback (so demo/offline content still looks great).
-- ScrollFrame: a lightweight scrollable canvas container.
-- TrackList: virtual-scrolled rich track rows (cover, title, clickable
-  artist, album, duration, heart).
-- TileGrid: a reflowing grid of cover tiles (playlists / albums / artists).
+Design for speed: lists and tile grids are drawn on a single tk.Canvas as
+lightweight items (text / images / rects) and VIRTUALIZED — only the rows
+that are on screen are drawn, and they're redrawn on scroll. This avoids
+creating thousands of tkinter widget objects (the #1 cause of lag in a
+widget-per-row layout).
 
-Kept deliberately lean so the app stays performance-light.
+ImageCache loads album art on worker threads, creates PhotoImages on the
+main thread, and falls back to fast colored placeholders.
+
 Made with heart by @johnthemailboy.
 """
 from __future__ import annotations
@@ -16,7 +17,7 @@ import threading
 import tkinter as tk
 
 try:
-    from PIL import Image, ImageTk, ImageEnhance
+    from PIL import Image, ImageTk
     _HAS_PIL = True
 except Exception:  # pragma: no cover
     _HAS_PIL = False
@@ -33,81 +34,74 @@ ACCENT_DIM = "#5b43c0"
 ACCENT_TEXT = "#ffffff"
 GREEN = "#1db954"
 LINE = "#262a33"
-ROW_HOVER = "#22262f"
+ROW_HOVER = "#242a36"
 FONT = "Segoe UI"
 
-MAX_ROWS = 500  # cap per list so huge libraries stay light
+MAX_ROWS = 400  # cap per list/grid so huge libraries stay light
 
 
 # ------------------------------------------------------------------ images
-def _gradient_image(seed: str, w: int = 300, h: int = 300):
-    """Deterministic pastel gradient tile (used when no cover URL exists)."""
+def _accent_color(seed: str, base=120):
+    """Stable pastel accent color for placeholder tiles."""
+    h = abs(hash(seed)) % 360
+    s, v = 0.55, 0.55
     import colorsys
-    hsh = abs(hash(seed)) % 360
-    hue = hsh / 360.0
-    top = colorsys.hsv_to_rgb(hue, 0.45, 0.62)
-    bot = colorsys.hsv_to_rgb((hue + 0.12) % 1.0, 0.55, 0.32)
-    img = Image.new("RGB", (w, h))
-    px = img.load()
-    for y in range(h):
-        f = y / max(1, h - 1)
-        r = int(top[0] + (bot[0] - top[0]) * f)
-        g = int(top[1] + (bot[1] - top[1]) * f)
-        b = int(top[2] + (bot[2] - top[2]) * f)
-        for x in range(w):
-            px[x, y] = (r, g, b)
-    return img
+    r, g, b = colorsys.hsv_to_rgb(h / 360.0, s, v)
+    return "#%02x%02x%02x" % (int(r * 255), int(g * 255), int(b * 255))
 
 
 class ImageCache:
-    """Loads images once, caches PhotoImages, falls back to a gradient.
-
-    Downloads/decoding happen on worker threads, but every tkinter
-    PhotoImage is created on the main thread (tkinter is not thread-safe).
-    Concurrent downloads are limited so a big list doesn't choke the network.
-    """
+    """Caches PhotoImages; downloads on workers, wraps on the main thread."""
 
     _MAX_DOWNLOADS = 6
 
     def __init__(self):
-        self._photos = {}       # key -> PhotoImage (main thread only)
-        self._imgs = {}         # key -> PIL Image waiting to be wrapped
-        self._pending = {}      # key -> list of (widget, kind)
+        self._photos = {}
+        self._subscribers = {}
         self._loading = set()
-        self._fallback = {}
         self._refs = []
         self._sem = threading.BoundedSemaphore(ImageCache._MAX_DOWNLOADS)
 
-    def get(self, key: str, size: int) -> "tk.PhotoImage | None":
-        return self._photos.get((key, size))
+    def get(self, url: str, size: int):
+        return self._photos.get((url, size))
 
     def attach(self, widget, url: str, size: int):
-        """Point a widget at a URL; it gets an async image or a gradient."""
+        """Ensure an image is loaded; call widget._apply_photo when ready."""
         widget._image_cache = self
-        if url and url.startswith("http"):
-            key = (url, size)
-            photo = self._photos.get(key)
-            if photo is not None:
-                widget._apply_photo(photo)
-                return
-            self._pending.setdefault(key, []).append(widget)
-            if url not in self._loading:
-                self._loading.add(url)
-                threading.Thread(target=self._fetch, args=(url, size),
-                                 daemon=True).start()
-        else:
-            widget._apply_photo(self._gradient(url or widget._seed, size))
+        if not url or not url.startswith("http"):
+            return
+        key = (url, size)
+        if key in self._photos:
+            widget._apply_photo(self._photos[key])
+            return
+        self._subscribers.setdefault(key, set()).add(widget)
+        if url not in self._loading:
+            self._loading.add(url)
+            threading.Thread(target=self._fetch, args=(url, size),
+                             daemon=True).start()
 
     def _fetch(self, url, size):
         try:
             with self._sem:
                 img = self._download(url, size)
-            self._imgs[(url, size)] = img
-            self.root.after(0, lambda: self._finalize(url, size))
+            key = (url, size)
+            self._photos[key] = ImageTk.PhotoImage(img)
+            self._refs.append(self._photos[key])
+            self.root.after(0, lambda: self._notify(url, size))
         except Exception:
             pass
         finally:
             self._loading.discard(url)
+
+    def _notify(self, url, size):
+        key = (url, size)
+        subs = self._subscribers.pop(key, set())
+        photo = self._photos.get(key)
+        for w in subs:
+            try:
+                w._apply_photo(photo)
+            except Exception:
+                pass
 
     def _download(self, url, size):
         import io
@@ -116,126 +110,326 @@ class ImageCache:
         img = Image.open(io.BytesIO(r.content)).convert("RGB")
         return img.resize((size, size), Image.LANCZOS)
 
-    def _finalize(self, url, size):
-        key = (url, size)
-        img = self._imgs.pop(key, None)
-        if img is None:
-            return
-        try:
-            photo = ImageTk.PhotoImage(img)
-        except Exception:
-            return
-        self._photos[key] = photo
-        self._refs.append(photo)
-        for widget in self._pending.pop(key, []):
-            try:
-                widget._apply_photo(photo)
-            except Exception:
-                pass
+    def art_photo(self, url, size):
+        """PhotoImage for a big cover/avatar (loaded async, applied via cb)."""
+        return self.get(url, size)
 
-    def attach_background(self, widget, url: str, w: int, h: int):
-        """Blurred, darkened backdrop from an album cover (or gradient)."""
-        widget._image_cache = self
-        if url and url.startswith("http"):
-            key = ("bg", url, w, h)
-            photo = self._photos.get(key)
-            if photo is not None:
-                widget._apply_bg(photo)
-                return
-            self._pending.setdefault(key, []).append(widget)
-            if url not in self._loading:
-                self._loading.add(url)
-                threading.Thread(target=self._fetch_bg, args=(url, w, h),
-                                 daemon=True).start()
-        else:
-            widget._apply_bg(self._gradient(widget._seed, max(w, h)))
 
-    def _fetch_bg(self, url, w, h):
+def _truncate(text: str, max_chars: int) -> str:
+    text = text or ""
+    return text if len(text) <= max_chars else text[: max_chars - 1].rstrip() + "…"
+
+
+class TrackList(tk.Canvas):
+    """Virtualized, canvas-drawn list of track rows (fast scrolling)."""
+
+    ROW_H = 54
+    THUMB = 44
+
+    def __init__(self, master, bg=BG, height=None):
+        super().__init__(master, bg=bg, highlightthickness=0, bd=0)
+        if height:
+            self.configure(height=height)
+        self.configure(yscrollincrement=self.ROW_H)
+        self._rows = []
+        self._cache = None
+        self._current = None
+        self._hover = -1
+        self._requested = set()
+        self.on_play = None
+        self.on_artist = None
+        self.on_like = None
+
+        self.bind("<Configure>", lambda e: self._redraw())
+        self.bind("<MouseWheel>", self._wheel)
+        self.bind("<Motion>", self._motion)
+        self.bind("<Leave>", lambda e: (setattr(self, "_hover", -1), self._redraw())[1])
+        self.bind("<Button-1>", self._click)
+
+        self.tag_bind("play", "<Button-1>", self._click_play)
+        self.tag_bind("artist", "<Button-1>", self._click_artist)
+        self.tag_bind("heart", "<Button-1>", self._click_heart)
+
+    def _apply_photo(self, photo=None):
+        self._redraw()
+
+    # public API ---------------------------------------------------------
+    def set_current(self, uri):
+        self._current = uri
+        self._redraw()
+
+    def set_items(self, tracks, cache):
+        self._rows = list(tracks)[:MAX_ROWS]
+        self._cache = cache
+        self._requested = set()
+        h = max(1, len(self._rows)) * self.ROW_H
+        self.configure(scrollregion=(0, 0, 1, h))
+        self._redraw()
+
+    def clear(self):
+        self.set_items([], self._cache)
+
+    # events -------------------------------------------------------------
+    def _wheel(self, e):
         try:
-            with self._sem:
-                img = self._blur(url, w, h)
-            key = ("bg", url, w, h)
-            self._imgs[key] = img
-            self.root.after(0, lambda: self._finalize_bg(url, w, h))
+            self.yview_scroll(int(-e.delta / 120), "units")
+            self._redraw()
         except Exception:
             pass
-        finally:
-            self._loading.discard(url)
 
-    def _finalize_bg(self, url, w, h):
-        key = ("bg", url, w, h)
-        img = self._imgs.pop(key, None)
-        if img is None:
+    def _row_at(self, y):
+        top = self.canvasy(0)
+        return int((top + y) // self.ROW_H)
+
+    def _motion(self, e):
+        r = self._row_at(e.y)
+        if 0 <= r < len(self._rows) and r != self._hover:
+            self._hover = r
+            self._redraw()
+        elif not (0 <= r < len(self._rows)) and self._hover != -1:
+            self._hover = -1
+            self._redraw()
+
+    def _click(self, e):
+        pass  # handled by tag bindings
+
+    def _click_play(self, e):
+        r = self._row_at(e.y)
+        if 0 <= r < len(self._rows) and self.on_play:
+            self.on_play(self._rows[r])
+
+    def _click_artist(self, e):
+        r = self._row_at(e.y)
+        if 0 <= r < len(self._rows) and self.on_artist and self._rows[r].artist_uris:
+            self.on_artist(self._rows[r])
+
+    def _click_heart(self, e):
+        r = self._row_at(e.y)
+        if 0 <= r < len(self._rows) and self.on_like:
+            self.on_like(self._rows[r])
+
+    # drawing ------------------------------------------------------------
+    def _photo(self, track):
+        url = track.image_url
+        if url and url.startswith("http"):
+            p = self._cache.get(url, self.THUMB) if self._cache else None
+            if p is not None:
+                return p
+            if url not in self._requested and self._cache:
+                self._requested.add(url)
+                self._cache.attach(self, url, self.THUMB)
+            return None
+        return None
+
+    def _redraw(self):
+        self.delete("all")
+        w = self.winfo_width()
+        if w < 2 or not self._rows:
             return
+        top = self.canvasy(0)
+        hh = self.winfo_height()
+        first = max(0, int(top // self.ROW_H))
+        last = min(len(self._rows), int((top + hh) // self.ROW_H) + 1)
+        for i in range(first, last):
+            self._draw_row(i, i * self.ROW_H - top)
+
+    def _draw_row(self, i, cy):
+        t = self._rows[i]
+        w = self.winfo_width()
+        selected = t.uri == self._current
+        hover = i == self._hover
+        fill = ROW_HOVER if (hover or selected) else BG
+        play_tag = "play"
+        self.create_rectangle(0, cy, w, cy + self.ROW_H, fill=fill,
+                              outline="", tags=play_tag)
+
+        x0 = 8
+        y0 = cy + (self.ROW_H - self.THUMB) // 2
+        ph = self._photo(t)
+        if ph is not None:
+            self.create_image(x0 + self.THUMB // 2, y0 + self.THUMB // 2,
+                              image=ph, tags=play_tag)
+        else:
+            c = _accent_color(t.name or "t")
+            self.create_rectangle(x0, y0, x0 + self.THUMB, y0 + self.THUMB,
+                                  fill=c, outline="", tags=play_tag)
+            self.create_text(x0 + self.THUMB // 2, y0 + self.THUMB // 2,
+                             text="♪", fill="#0b0d11", font=(FONT, 18),
+                             tags=play_tag)
+
+        tx = x0 + self.THUMB + 12
+        maxchars = max(8, int((w - tx - 150) / 7))
+        title = _truncate(t.name, maxchars)
+        self.create_text(tx, cy + 20, text=title, anchor="w", fill=TEXT,
+                         font=(FONT, 12, "bold"), tags=play_tag)
+        # artist (clickable) + album
+        if t.artist_uris:
+            aid = self.create_text(tx, cy + 38, text=t.artists or "", anchor="w",
+                                   fill=ACCENT, font=(FONT, 10, "underline"),
+                                   tags="artist")
+        else:
+            aid = self.create_text(tx, cy + 38, text=t.artists or "", anchor="w",
+                                   fill=MUTED, font=(FONT, 10), tags=play_tag)
         try:
-            photo = ImageTk.PhotoImage(img)
+            bb = self.bbox(aid)
+            ax = (bb[2] + 8) if bb else tx + 90
         except Exception:
+            ax = tx + 90
+        self.create_text(ax, cy + 38, text="· " + _truncate(t.album, maxchars),
+                         anchor="w", fill=MUTED, font=(FONT, 10), tags=play_tag)
+
+        self.create_text(w - 54, cy + 26, text=t.duration_text, anchor="e",
+                         fill=MUTED, font=(FONT, 10))
+        heart = "♥" if t.liked else "♡"
+        self.create_text(w - 26, cy + 27, text=heart,
+                         fill=GREEN if t.liked else MUTED, font=(FONT, 14),
+                         tags="heart")
+
+
+class TileGrid(tk.Canvas):
+    """Virtualized, canvas-drawn grid of cover tiles (fast scrolling)."""
+
+    def __init__(self, master, bg=BG, cols=5, tile_size=118, height=None, pad=8):
+        super().__init__(master, bg=bg, highlightthickness=0, bd=0)
+        if height:
+            self.configure(height=height)
+        self._items = []
+        self._cache = None
+        self._cols = cols
+        self._tile = tile_size
+        self._pad = pad
+        self._requested = set()
+        self._hover = -1
+        self.bind("<Configure>", lambda e: self._redraw())
+        self.bind("<MouseWheel>", self._wheel)
+        self.bind("<Button-1>", self._click)
+        self.tag_bind("tile", "<Button-1>", self._click_tile)
+
+    def _apply_photo(self, photo=None):
+        self._redraw()
+
+    def set_items(self, items, cache):
+        self._items = list(items)[:MAX_ROWS]
+        self._cache = cache
+        self._requested = set()
+        self._redraw()
+
+    def clear(self):
+        self.set_items([], self._cache)
+
+    def _cols_here(self):
+        w = self.winfo_width()
+        step = self._tile + self._pad
+        return max(1, (w + self._pad) // step)
+
+    def _rows_total(self):
+        cols = self._cols_here()
+        return max(1, -(-len(self._items) // cols))
+
+    def _wheel(self, e):
+        try:
+            self.yview_scroll(int(-e.delta / 120), "units")
+            self._redraw()
+        except Exception:
+            pass
+
+    def _click(self, e):
+        pass
+
+    def _click_tile(self, e):
+        cols = self._cols_here()
+        top = self.canvasy(0)
+        row = int((top + e.y) // (self._tile + self._pad))
+        col = int(e.x // (self._tile + self._pad))
+        idx = row * cols + col
+        if 0 <= idx < len(self._items):
+            cmd = self._items[idx].get("command")
+            if cmd:
+                cmd()
+
+    def _redraw(self):
+        self.delete("all")
+        w = self.winfo_width()
+        if w < 2 or not self._items:
             return
-        self._photos[key] = photo
-        self._refs.append(photo)
-        for widget in self._pending.pop(key, []):
-            try:
-                widget._apply_bg(photo)
-            except Exception:
-                pass
+        cols = self._cols_here()
+        step = self._tile + self._pad
+        rows = self._rows_total()
+        h = rows * step + self._pad
+        self.configure(scrollregion=(0, 0, 1, h))
+        top = self.canvasy(0)
+        hh = self.winfo_height()
+        first = max(0, int(top // step))
+        last = min(rows, int((top + hh) // step) + 1)
+        for r in range(first, last):
+            for c in range(cols):
+                idx = r * cols + c
+                if idx >= len(self._items):
+                    break
+                self._draw_tile(idx, r, c, r * step - top)
 
-    def _blur(self, url, w, h):
-        import io
-        import requests
-        r = requests.get(url, timeout=10)
-        img = Image.open(io.BytesIO(r.content)).convert("RGB")
-        small = img.resize((16, 16), Image.BILINEAR)
-        blurred = small.resize((w, h), Image.BILINEAR)
-        return ImageEnhance.Brightness(blurred).enhance(0.5)
+    def _photo(self, item):
+        url = item.get("url")
+        if url and url.startswith("http"):
+            p = self._cache.get(url, self._tile) if self._cache else None
+            if p is not None:
+                return p
+            if url not in self._requested and self._cache:
+                self._requested.add(url)
+                self._cache.attach(self, url, self._tile)
+            return None
+        return None
 
-    def _gradient(self, seed: str, size: int):
-        key = ("grad", seed, size)
-        if key not in self._fallback:
-            # generate small, upscale cheaply (fast on the main thread)
-            gs = min(size, 128)
-            img = _gradient_image(seed, gs, gs)
-            if gs != size:
-                img = img.resize((size, size), Image.BILINEAR)
-            self._fallback[key] = ImageTk.PhotoImage(img)
-            self._refs.append(self._fallback[key])
-        return self._fallback[key]
+    def _draw_tile(self, idx, r, c, cy):
+        item = self._items[idx]
+        x0 = c * (self._tile + self._pad) + self._pad
+        ph = self._photo(item)
+        if ph is not None:
+            self.create_image(x0 + self._tile // 2, cy + self._tile // 2,
+                              image=ph, tags="tile")
+        else:
+            col = _accent_color(item.get("seed") or item.get("label") or "t")
+            self.create_rectangle(x0, cy, x0 + self._tile, cy + self._tile,
+                                  fill=col, outline="", tags="tile")
+            self.create_text(x0 + self._tile // 2, cy + self._tile // 2,
+                             text="♪", fill="#0b0d11", font=(FONT, 30),
+                             tags="tile")
+        label = _truncate(item.get("label", ""), int(self._tile / 7))
+        self.create_text(x0 + 2, cy + self._tile + 16, text=label, anchor="w",
+                         fill=TEXT, font=(FONT, 10, "bold"), tags="tile")
+        sub = item.get("sub")
+        if sub:
+            self.create_text(x0 + 2, cy + self._tile + 32, text=_truncate(sub, int(self._tile / 7)),
+                             anchor="w", fill=MUTED, font=(FONT, 9))
 
 
 class _ImageView(tk.Canvas):
-    """A square image that fills itself; draws a rounded cover or gradient."""
-    def __init__(self, master, size, seed="", corner=8, bg=SIDE):
+    """A square image widget (used for big art / avatars)."""
+    def __init__(self, master, size, seed="", bg=SIDE, corner=10):
         super().__init__(master, width=size, height=size, bg=bg,
                          highlightthickness=0, bd=0)
         self._size = size
         self._seed = seed or "cover"
         self._photo = None
-        self._corner = corner
         self._bg = bg
-        self.bind("<Configure>", lambda e: self._redraw())
 
     def _apply_photo(self, photo):
         self._photo = photo
         self._redraw()
 
-    def _apply_bg(self, photo):
-        self.delete("all")
-        self.create_image(self._size // 2, self._size // 2, image=photo)
-
     def _redraw(self):
         self.delete("all")
-        w = self.winfo_width()
-        if w < 2:
+        s = self.winfo_width()
+        if s < 2 or self._photo is None:
             return
-        if self._photo is not None:
-            self.create_image(w // 2, w // 2, image=self._photo)
+        self.create_image(s // 2, s // 2, image=self._photo)
 
 
 class Backdrop(tk.Canvas):
-    """Full-size blurred album-art backdrop for the now-playing area."""
+    """Optional blurred album-art backdrop."""
     def __init__(self, master, bg=BG):
         super().__init__(master, bg=bg, highlightthickness=0, bd=0)
         self._photo = None
-        self._seed = "bg"
         self.bind("<Configure>", lambda e: self._redraw())
 
     def _apply_bg(self, photo):
@@ -252,190 +446,3 @@ class Backdrop(tk.Canvas):
         if w < 2 or h < 2 or self._photo is None:
             return
         self.create_image(w // 2, h // 2, image=self._photo)
-
-
-class ScrollFrame(tk.Frame):
-    """A scrollable body. Use as the main scroll area (default) or with a
-    fixed pixel height so it can sit among other widgets without collapsing."""
-
-    def __init__(self, master, bg=BG, height=None):
-        super().__init__(master, bg=bg)
-        self.canvas = tk.Canvas(self, bg=bg, highlightthickness=0, bd=0)
-        if height:
-            self.canvas.configure(height=height)
-        sb = tk.Scrollbar(self, orient="vertical", command=self.canvas.yview,
-                          bg=bg, troughcolor=bg, activebackground=ACCENT,
-                          highlightthickness=0, width=8)
-        self.canvas.configure(yscrollcommand=sb.set)
-        sb.pack(side="right", fill="y")
-        if height:
-            self.canvas.pack(side="left", fill="x")
-            self.pack_propagate(False)
-        else:
-            self.canvas.pack(side="left", fill="both", expand=True)
-        self.body = tk.Frame(self.canvas, bg=bg)
-        self._win = self.canvas.create_window((0, 0), window=self.body, anchor="nw")
-        self.body.bind("<Configure>",
-                       lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
-        self.canvas.bind("<Configure>", lambda e: self._sync_width())
-        self.canvas.bind("<MouseWheel>", self._on_wheel)
-        self.body.bind("<MouseWheel>", self._on_wheel)
-
-    def _sync_width(self):
-        try:
-            self.canvas.itemconfigure(self._win, width=self.canvas.winfo_width())
-        except Exception:
-            pass
-
-    def _on_wheel(self, e):
-        try:
-            self.canvas.yview_scroll(int(-e.delta / 120), "units")
-        except Exception:
-            pass
-
-    def clear(self):
-        for w in self.body.winfo_children():
-            w.destroy()
-
-
-# ------------------------------------------------------------------ rows
-class TrackRow(tk.Frame):
-    def __init__(self, master, track, cache, on_play=None, on_artist=None,
-                 on_like=None, show_liked=True, palette=None, playing=False):
-        super().__init__(master, bg=ROW_HOVER if playing else BG)
-        self.track = track
-        self._cache = cache
-        self._size = 44
-        self.grid_columnconfigure(2, weight=1)
-
-        self.thumb = _ImageView(self, self._size, seed=track.name or "t")
-        self.thumb.grid(row=0, column=0, rowspan=2, padx=(6, 10), pady=5)
-        cache.attach(self.thumb, track.image_url, self._size)
-
-        self.name_lbl = tk.Label(self, text=track.name or "", bg=self["bg"],
-                                 fg=TEXT, font=(FONT, 12), anchor="w")
-        self.name_lbl.grid(row=0, column=1, sticky="w")
-
-        artist = track.artists or "?"
-        self.sub_lbl = tk.Label(self, text=f"{artist} · {track.album or ''}",
-                                bg=self["bg"], fg=MUTED, font=(FONT, 10), anchor="w")
-        self.sub_lbl.grid(row=1, column=1, sticky="w")
-        if on_artist and track.artist_uris:
-            self.sub_lbl.bind("<Button-1>",
-                              lambda e: on_artist(self.track))
-
-        self.dur_lbl = tk.Label(self, text=track.duration_text, bg=self["bg"],
-                                fg=MUTED, font=(FONT, 10))
-        self.dur_lbl.grid(row=0, column=3, rowspan=2, sticky="e", padx=10)
-        if on_like:
-            self.heart = tk.Label(self, text="♥" if track.liked else "♡",
-                                  bg=self["bg"],
-                                  fg=GREEN if track.liked else MUTED,
-                                  font=(FONT, 13), cursor="hand2")
-            self.heart.grid(row=0, column=4, rowspan=2, sticky="e", padx=(0, 12))
-            self.heart.bind("<Button-1>", lambda e: on_like(self.track))
-
-        self._bg = self["bg"]
-        self.bind("<Enter>", self._on_enter)
-        self.bind("<Leave>", self._on_leave)
-        for w in [self.name_lbl, self.sub_lbl, self.dur_lbl]:
-            w.bind("<Enter>", self._on_enter)
-            w.bind("<Leave>", self._on_leave)
-        if on_play:
-            # note: sub_lbl is the artist/album line (clickable to artist)
-            for w in [self, self.name_lbl, self.dur_lbl, self.thumb]:
-                w.bind("<Button-1>", lambda e: on_play(self.track))
-
-    def _on_enter(self, e):
-        if self._bg == ROW_HOVER:
-            return
-        self.configure(bg=ROW_HOVER)
-        for w in self.winfo_children():
-            try:
-                w.configure(bg=ROW_HOVER)
-            except Exception:
-                pass
-
-    def _on_leave(self, e):
-        self.configure(bg=BG)
-        for w in self.winfo_children():
-            try:
-                w.configure(bg=BG)
-            except Exception:
-                pass
-
-
-class TrackList(ScrollFrame):
-    """Scrollable rich list of tracks."""
-
-    def __init__(self, master, bg=BG, height=None):
-        super().__init__(master, bg=bg, height=height)
-        self._rows = []
-        self.on_play = None
-        self.on_artist = None
-        self.on_like = None
-        self.current_uri = None
-
-    def set_current(self, uri):
-        self.current_uri = uri
-        for row in self._rows:
-            want = row.track.uri == uri
-            if row._bg != (ROW_HOVER if want else BG):
-                row.configure(bg=ROW_HOVER if want else BG)
-                for w in row.winfo_children():
-                    try:
-                        w.configure(bg=ROW_HOVER if want else BG)
-                    except Exception:
-                        pass
-
-    def set_items(self, tracks, cache):
-        self.clear()
-        self._rows = []
-        for t in tracks[:MAX_ROWS]:
-            r = TrackRow(self.body, t, cache, self.on_play, self.on_artist,
-                         self.on_like, playing=(t.uri == self.current_uri))
-            r.pack(fill="x")
-            self._rows.append(r)
-
-
-# ------------------------------------------------------------------ tiles
-class Tile(tk.Frame):
-    def __init__(self, master, cache, label, url="", seed="", size=130,
-                 command=None, sub=""):
-        super().__init__(master, bg=BG)
-        self.grid_columnconfigure(0, weight=1)
-        self.im = _ImageView(self, size, seed=seed or label, bg=BG)
-        self.im.grid(row=0, column=0, pady=(0, 6))
-        cache.attach(self.im, url, size)
-        if command:
-            self.im.bind("<Button-1>", lambda e: command())
-        self.nm = tk.Label(self, text=label, bg=BG, fg=TEXT, font=(FONT, 11),
-                           anchor="w", wraplength=size)
-        self.nm.grid(row=1, column=0, sticky="w")
-        if sub:
-            tk.Label(self, text=sub, bg=BG, fg=MUTED, font=(FONT, 9),
-                     anchor="w").grid(row=2, column=0, sticky="w")
-
-
-class TileGrid(ScrollFrame):
-    """Reflowing grid of cover tiles."""
-
-    def __init__(self, master, bg=BG, cols=4, tile_size=130, height=None):
-        super().__init__(master, bg=bg, height=height)
-        self._cols = cols
-        self._tile_size = tile_size
-        self._tiles = []
-        for c in range(cols):
-            self.body.grid_columnconfigure(c, weight=1)
-
-    def set_items(self, items, cache):
-        """items: list of dicts {label, url, sub, seed, command}."""
-        self.clear()
-        self._tiles = []
-        cols = self._cols
-        for i, it in enumerate(items[:MAX_ROWS]):
-            t = Tile(self.body, cache, it.get("label", ""), it.get("url", ""),
-                     it.get("seed", ""), self._tile_size,
-                     it.get("command"), it.get("sub", ""))
-            t.grid(row=i // cols, column=i % cols, padx=8, pady=8, sticky="nsew")
-            self._tiles.append(t)
