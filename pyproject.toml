@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "permify"
+version = "0.1.0"
+description = "A windowed Spotify player - a real desktop app for your music."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "John The Mail Boy", email = "johnthemailboy@users.noreply.github.com" }]
+keywords = ["spotify", "gui", "desktop", "music", "player", "tkinter"]
+dependencies = [
+    "spotipy>=2.23",
+    "librespot>=0.0.9",
+    "av>=12",
+    "sounddevice>=0.4",
+    "rich>=13",
+    "readchar>=4",
+    "Pillow>=10",
+    "requests>=2.28",
+    "numpy>=1.24",
+]
+
+[project.scripts]
+permify = "permify.__main__:main"
+
+[tool.setuptools]
+packages = ["permify"]
