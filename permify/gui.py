@@ -907,10 +907,14 @@ class PermifyGUI:
 
     # --------------------------------------------------------------- poll
     def _poll_loop(self):
+        """Fetch snapshots on a worker thread, but paint the UI on the
+        main thread via root.after. Touching tkinter widgets directly from
+        another thread is not thread-safe and causes stutter."""
         while not self._stop.is_set():
             try:
-                self.snap = self.engine.snapshot()
-                self._update()
+                snap = self.engine.snapshot()
+                self.snap = snap
+                self.root.after(0, self._update)
             except Exception:
                 pass
             self._stop.wait(0.5)
@@ -972,9 +976,11 @@ class PermifyGUI:
                 self.shuf_btn.config(fg=ui.ACCENT if snap.shuffle else ui.MUTED)
             if self._changed("repeat", snap.repeat):
                 self.rep_btn.config(fg=ui.ACCENT if snap.repeat != "off" else ui.MUTED)
-            if self._current_tab == "Home":
-                self.home_top_tracks.set_current(t.uri if t else None)
-            elif self._current_tab == "Queue":
+            cur = t.uri if t else None
+            if self._changed("cur_uri", cur):
+                if self._current_tab == "Home":
+                    self.home_top_tracks.set_current(cur)
+            if self._current_tab == "Queue":
                 self._sync_queue_now()
         except Exception:
             pass

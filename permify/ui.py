@@ -60,108 +60,145 @@ def _gradient_image(seed: str, w: int = 300, h: int = 300):
 
 
 class ImageCache:
-    """Loads images once, caches PhotoImages, falls back to a gradient."""
+    """Loads images once, caches PhotoImages, falls back to a gradient.
+
+    Downloads/decoding happen on worker threads, but every tkinter
+    PhotoImage is created on the main thread (tkinter is not thread-safe).
+    Concurrent downloads are limited so a big list doesn't choke the network.
+    """
+
+    _MAX_DOWNLOADS = 6
 
     def __init__(self):
-        self._photos = {}       # key -> PhotoImage
-        self._pending = {}      # key -> list of (widget, 'photo'|'bg')
+        self._photos = {}       # key -> PhotoImage (main thread only)
+        self._imgs = {}         # key -> PIL Image waiting to be wrapped
+        self._pending = {}      # key -> list of (widget, kind)
         self._loading = set()
         self._fallback = {}
         self._refs = []
+        self._sem = threading.BoundedSemaphore(ImageCache._MAX_DOWNLOADS)
 
     def get(self, key: str, size: int) -> "tk.PhotoImage | None":
         return self._photos.get((key, size))
-
-    def _load(self, key: str, url, size: int):
-        if key in self._loading:
-            return
-        self._loading.add(key)
-        def work():
-            try:
-                img = self._fetch(url, size)
-                photo = ImageTk.PhotoImage(img)
-                self._photos[(key, size)] = photo
-                self._refs.append(photo)
-                self.root.after(0, lambda: self._notify(key, size))
-            except Exception:
-                pass
-            finally:
-                self._loading.discard(key)
-        threading.Thread(target=work, daemon=True).start()
-
-    def _fetch(self, url, size: int):
-        import io
-        import requests
-        r = requests.get(url, timeout=8)
-        img = Image.open(io.BytesIO(r.content)).convert("RGB")
-        img = img.resize((size, size), Image.LANCZOS)
-        return img
-
-    def _notify(self, key, size):
-        for widget, kind in list(self._pending.pop((key, size), [])):
-            try:
-                widget._apply_photo(self.get(key, size))
-            except Exception:
-                pass
 
     def attach(self, widget, url: str, size: int):
         """Point a widget at a URL; it gets an async image or a gradient."""
         widget._image_cache = self
         if url and url.startswith("http"):
-            photo = self.get(url, size)
+            key = (url, size)
+            photo = self._photos.get(key)
             if photo is not None:
                 widget._apply_photo(photo)
                 return
-            self._pending.setdefault((url, size), []).append((widget, "photo"))
-            self._load(url, url, size)
+            self._pending.setdefault(key, []).append(widget)
+            if url not in self._loading:
+                self._loading.add(url)
+                threading.Thread(target=self._fetch, args=(url, size),
+                                 daemon=True).start()
         else:
             widget._apply_photo(self._gradient(url or widget._seed, size))
 
-    def _gradient(self, seed: str, size: int):
-        key = ("grad", seed, size)
-        if key not in self._fallback:
-            self._fallback[key] = ImageTk.PhotoImage(_gradient_image(seed, size, size))
-            self._refs.append(self._fallback[key])
-        return self._fallback[key]
+    def _fetch(self, url, size):
+        try:
+            with self._sem:
+                img = self._download(url, size)
+            self._imgs[(url, size)] = img
+            self.root.after(0, lambda: self._finalize(url, size))
+        except Exception:
+            pass
+        finally:
+            self._loading.discard(url)
+
+    def _download(self, url, size):
+        import io
+        import requests
+        r = requests.get(url, timeout=10)
+        img = Image.open(io.BytesIO(r.content)).convert("RGB")
+        return img.resize((size, size), Image.LANCZOS)
+
+    def _finalize(self, url, size):
+        key = (url, size)
+        img = self._imgs.pop(key, None)
+        if img is None:
+            return
+        try:
+            photo = ImageTk.PhotoImage(img)
+        except Exception:
+            return
+        self._photos[key] = photo
+        self._refs.append(photo)
+        for widget in self._pending.pop(key, []):
+            try:
+                widget._apply_photo(photo)
+            except Exception:
+                pass
 
     def attach_background(self, widget, url: str, w: int, h: int):
         """Blurred, darkened backdrop from an album cover (or gradient)."""
         widget._image_cache = self
         if url and url.startswith("http"):
-            def done():
-                try:
-                    widget._apply_bg(self._blur(url, w, h))
-                except Exception:
-                    pass
-            self._load_bg(url, w, h, done)
+            key = ("bg", url, w, h)
+            photo = self._photos.get(key)
+            if photo is not None:
+                widget._apply_bg(photo)
+                return
+            self._pending.setdefault(key, []).append(widget)
+            if url not in self._loading:
+                self._loading.add(url)
+                threading.Thread(target=self._fetch_bg, args=(url, w, h),
+                                 daemon=True).start()
         else:
             widget._apply_bg(self._gradient(widget._seed, max(w, h)))
 
-    def _load_bg(self, url, w, h, done):
-        if ("bg", url) in self._photos:
+    def _fetch_bg(self, url, w, h):
+        try:
+            with self._sem:
+                img = self._blur(url, w, h)
+            key = ("bg", url, w, h)
+            self._imgs[key] = img
+            self.root.after(0, lambda: self._finalize_bg(url, w, h))
+        except Exception:
+            pass
+        finally:
+            self._loading.discard(url)
+
+    def _finalize_bg(self, url, w, h):
+        key = ("bg", url, w, h)
+        img = self._imgs.pop(key, None)
+        if img is None:
             return
-        if url in self._loading:
+        try:
+            photo = ImageTk.PhotoImage(img)
+        except Exception:
             return
-        self._loading.add(url)
-        def work():
+        self._photos[key] = photo
+        self._refs.append(photo)
+        for widget in self._pending.pop(key, []):
             try:
-                self._photos[("bg", url)] = self._blur(url, w, h)
-                self._refs.append(self._photos[("bg", url)])
-                self.root.after(0, done)
+                widget._apply_bg(photo)
             except Exception:
                 pass
-            finally:
-                self._loading.discard(url)
-        threading.Thread(target=work, daemon=True).start()
 
     def _blur(self, url, w, h):
         import io
         import requests
-        r = requests.get(url, timeout=8)
+        r = requests.get(url, timeout=10)
         img = Image.open(io.BytesIO(r.content)).convert("RGB")
         small = img.resize((16, 16), Image.BILINEAR)
         blurred = small.resize((w, h), Image.BILINEAR)
         return ImageEnhance.Brightness(blurred).enhance(0.5)
+
+    def _gradient(self, seed: str, size: int):
+        key = ("grad", seed, size)
+        if key not in self._fallback:
+            # generate small, upscale cheaply (fast on the main thread)
+            gs = min(size, 128)
+            img = _gradient_image(seed, gs, gs)
+            if gs != size:
+                img = img.resize((size, size), Image.BILINEAR)
+            self._fallback[key] = ImageTk.PhotoImage(img)
+            self._refs.append(self._fallback[key])
+        return self._fallback[key]
 
 
 class _ImageView(tk.Canvas):
@@ -296,7 +333,8 @@ class TrackRow(tk.Frame):
             w.bind("<Enter>", self._on_enter)
             w.bind("<Leave>", self._on_leave)
         if on_play:
-            for w in [self, self.name_lbl, self.sub_lbl, self.dur_lbl, self.thumb]:
+            # note: sub_lbl is the artist/album line (clickable to artist)
+            for w in [self, self.name_lbl, self.dur_lbl, self.thumb]:
                 w.bind("<Button-1>", lambda e: on_play(self.track))
 
     def _on_enter(self, e):
