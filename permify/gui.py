@@ -132,12 +132,11 @@ class PermifyGUI:
     # ------------------------------------------------------------- panels
     def _build_home(self, f) -> None:
         import tkinter as tk
-        self.home_bd = ui.Backdrop(f)
-        self.home_bd.pack(fill="x")
-        head = tk.Frame(self.home_bd, bg=ui.BG)
-        self.home_bd.create_window(24, 16, window=head, anchor="nw")
+        # now playing header (clean, robust — no fragile backdrop)
+        head = tk.Frame(f, bg=ui.BG)
+        head.pack(fill="x", padx=22, pady=(18, 10))
         self.art = ui._ImageView(head, 96, seed="cover", bg=ui.BG)
-        self.art.grid(row=0, column=0, rowspan=3, padx=(8, 16), pady=10)
+        self.art.grid(row=0, column=0, rowspan=3, padx=(0, 16), pady=6)
         info = tk.Frame(head, bg=ui.BG)
         info.grid(row=0, column=1, sticky="w")
         tk.Label(info, text="NOW PLAYING", bg=ui.BG, fg=ui.ACCENT,
@@ -152,29 +151,19 @@ class PermifyGUI:
                               font=(ui.FONT, 10), anchor="w")
         self.album.pack(anchor="w")
 
-        body = tk.Frame(f, bg=ui.BG)
-        body.pack(fill="both", expand=True, padx=20, pady=8)
-        self.home_scroll = ui.ScrollFrame(body)
-        self.home_scroll.pack(fill="both", expand=True)
+        # playlists: a fixed-height cover grid (no nesting, can't collapse)
+        tk.Label(f, text="YOUR PLAYLISTS", bg=ui.BG, fg=ui.ACCENT,
+                 font=(ui.FONT, 12, "bold"), anchor="w").pack(anchor="w", padx=22, pady=(4, 2))
+        self.home_playlists = ui.TileGrid(f, cols=5, tile_size=118, height=172)
+        self.home_playlists.pack(fill="x", padx=22)
 
-        self.home_playlists = ui.TileGrid(self.home_scroll.body, cols=5, tile_size=118)
-        self.home_top_tracks = ui.TrackList(self.home_scroll.body)
-        self.home_artists = ui.TileGrid(self.home_scroll.body, cols=6, tile_size=92)
-        self.home_recent = ui.TrackList(self.home_scroll.body)
-        self._section("YOUR PLAYLISTS", self.home_playlists)
-        self._section("MOST PLAYED", self.home_top_tracks)
-        self._section("YOUR ARTISTS", self.home_artists)
-        self._section("RECENTLY PLAYED", self.home_recent)
+        # most played: expandable list fills the rest
+        tk.Label(f, text="MOST PLAYED", bg=ui.BG, fg=ui.ACCENT,
+                 font=(ui.FONT, 12, "bold"), anchor="w").pack(anchor="w", padx=22, pady=(12, 2))
+        self.home_top_tracks = ui.TrackList(f)
+        self.home_top_tracks.pack(fill="both", expand=True, padx=22, pady=(0, 12))
         self.home_top_tracks.on_play = self._play_track
-        self.home_recent.on_play = self._play_track
         self.home_top_tracks.on_artist = self._open_artist
-        self.home_recent.on_artist = self._open_artist
-
-    def _section(self, label, widget):
-        import tkinter as tk
-        tk.Label(self.home_scroll.body, text=label, bg=ui.BG, fg=ui.ACCENT,
-                 font=(ui.FONT, 12, "bold"), anchor="w").pack(fill="x", pady=(14, 2))
-        widget.pack(fill="x")
 
     def _build_search(self, f) -> None:
         import tkinter as tk
@@ -211,13 +200,13 @@ class PermifyGUI:
         self.search_results.on_artist = self._open_artist
         self.search_results.on_like = self._like_track
         self._search_pane = "tracks"
+        self._search_view = self.search_results
         self._search_cat("All", redraw=False)
 
     def _build_library(self, f) -> None:
-        self.lib_stack = ui.ScrollFrame(f)
-        self.lib_stack.pack(fill="both", expand=True, padx=20, pady=12)
-        self.library_grid = ui.TileGrid(self.lib_stack.body, cols=5, tile_size=120)
-        self.library_grid.pack(fill="x")
+        self.library_grid = ui.TileGrid(f, cols=5, tile_size=120)
+        self.library_grid.pack(fill="both", expand=True, padx=20, pady=12)
+        self._library_list = None
 
     def _build_queue(self, f) -> None:
         import tkinter as tk
@@ -353,21 +342,17 @@ class PermifyGUI:
                                     command=self._follow_artist)
         self.art_follow.grid(row=0, column=1, padx=4)
 
-        body = tk.Frame(f, bg=ui.BG)
-        body.pack(fill="both", expand=True, padx=20, pady=8)
-        self.artist_scroll = ui.ScrollFrame(body)
-        self.artist_scroll.pack(fill="both", expand=True)
-        tk.Label(self.artist_scroll.body, text="POPULAR", bg=ui.BG, fg=ui.ACCENT,
-                 font=(ui.FONT, 12, "bold"), anchor="w").pack(fill="x", pady=(10, 2))
-        self.artist_top = ui.TrackList(self.artist_scroll.body)
-        self.artist_top.pack(fill="x")
+        tk.Label(f, text="POPULAR", bg=ui.BG, fg=ui.ACCENT,
+                 font=(ui.FONT, 12, "bold"), anchor="w").pack(anchor="w", padx=20, pady=(12, 2))
+        self.artist_top = ui.TrackList(f)
+        self.artist_top.pack(fill="both", expand=True, padx=20)
         self.artist_top.on_play = self._play_track
         self.artist_top.on_artist = self._open_artist
         self.artist_top.on_like = self._like_track
-        tk.Label(self.artist_scroll.body, text="ALBUMS", bg=ui.BG, fg=ui.ACCENT,
-                 font=(ui.FONT, 12, "bold"), anchor="w").pack(fill="x", pady=(14, 2))
-        self.artist_albums = ui.TileGrid(self.artist_scroll.body, cols=5, tile_size=120)
-        self.artist_albums.pack(fill="x")
+        tk.Label(f, text="ALBUMS", bg=ui.BG, fg=ui.ACCENT,
+                 font=(ui.FONT, 12, "bold"), anchor="w").pack(anchor="w", padx=20, pady=(12, 2))
+        self.artist_albums = ui.TileGrid(f, cols=5, tile_size=120, height=176)
+        self.artist_albums.pack(fill="x", padx=20, pady=(0, 12))
 
     def _build_album(self, f) -> None:
         import tkinter as tk
@@ -400,7 +385,7 @@ class PermifyGUI:
     # ------------------------------------------------------- player bar
     def _build_player_bar(self, main) -> None:
         import tkinter as tk
-        bar = tk.Frame(main, bg=ui.SIDE, height=76)
+        bar = tk.Frame(main, bg=ui.SIDE, height=88)
         bar.pack(side="bottom", fill="x")
         bar.pack_propagate(False)
         pad = 14
@@ -478,6 +463,8 @@ class PermifyGUI:
             self._refresh_lyrics()
         elif name == "Queue":
             self._sync_queue_now()
+        elif name == "Library" and self._playlists:
+            self._show_library_grid()
 
     # ----------------------------------------------------------------- keys
     def _bind_keys(self):
@@ -505,6 +492,12 @@ class PermifyGUI:
             self.root.after(0, lambda: self._fill_library(pls))
         threading.Thread(target=work, daemon=True).start()
 
+    def _show_library_grid(self):
+        if getattr(self, "_library_list", None):
+            self._library_list.pack_forget()
+            self._library_list = None
+        self.library_grid.pack(fill="both", expand=True, padx=20, pady=12)
+
     def _fill_library(self, pls):
         self._playlists = pls
         self.lib.delete(0, "end")
@@ -517,6 +510,7 @@ class PermifyGUI:
             items.append({"label": p.name, "url": p.image_url, "seed": p.name,
                           "sub": f"{p.count} tracks",
                           "command": lambda p=p: self._open_playlist(p, p.name)})
+        self._show_library_grid()
         self.library_grid.set_items(items, self.images)
 
     def _lib_open(self):
@@ -540,13 +534,13 @@ class PermifyGUI:
                 tracks = []
             def fill():
                 self.switch_tab("Library")
-                self.library_grid.clear()
-                tl = ui.TrackList(self.lib_stack.body)
-                tl.pack(fill="both", expand=True)
+                self.library_grid.pack_forget()
+                tl = ui.TrackList(self.panels["Library"])
+                tl.pack(fill="both", expand=True, padx=20, pady=12)
                 tl.on_play = self._play_track
                 tl.on_artist = self._open_artist
                 tl.on_like = self._like_track
-                self._cur_library_list = tl
+                self._library_list = tl
                 tl.set_items(tracks, self.images)
             self.root.after(0, fill)
         threading.Thread(target=work, daemon=True).start()
@@ -557,14 +551,12 @@ class PermifyGUI:
             try:
                 pls = self.engine.get_playlists()
                 tops = self.engine.top_tracks()
-                arts = self.engine.top_artists()
-                recent = self.engine.recently_played()
             except Exception:
-                pls, tops, arts, recent = [], [], [], []
-            self.root.after(0, lambda: self._fill_home(pls, tops, arts, recent))
+                pls, tops = [], []
+            self.root.after(0, lambda: self._fill_home(pls, tops))
         threading.Thread(target=work, daemon=True).start()
 
-    def _fill_home(self, pls, tops, arts, recent):
+    def _fill_home(self, pls, tops):
         p_items = [{"label": "Liked Songs", "seed": "liked", "url": "",
                     "command": lambda: self._open_playlist("liked", "Liked Songs")}]
         for p in pls:
@@ -572,10 +564,6 @@ class PermifyGUI:
                             "command": lambda p=p: self._open_playlist(p, p.name)})
         self.home_playlists.set_items(p_items, self.images)
         self.home_top_tracks.set_items(tops, self.images)
-        a_items = [{"label": a.name, "url": a.image_url, "seed": a.name,
-                    "command": lambda a=a: self._open_artist(a)} for a in arts]
-        self.home_artists.set_items(a_items, self.images)
-        self.home_recent.set_items(recent, self.images)
 
     # ------------------------------------------------------------- search
     def _search_debounce(self, e=None):
@@ -618,32 +606,44 @@ class PermifyGUI:
             self.root.after(0, fill)
         threading.Thread(target=work, daemon=True).start()
 
+    def _clear_search_view(self):
+        if getattr(self, "_search_view", None):
+            try:
+                self._search_view.pack_forget()
+            except Exception:
+                pass
+        self._search_view = None
+
     def _populate_tracks(self, tracks):
+        self._clear_search_view()
         self.search_results.pack(fill="both", expand=True)
         self.search_results.set_items(tracks, self.images)
+        self._search_view = self.search_results
         self._search_pane = "tracks"
 
     def _populate_artists(self, artists):
-        self.search_results.pack_forget()
+        self._clear_search_view()
         g = ui.TileGrid(self.search_area, cols=5, tile_size=130)
         g.pack(fill="both", expand=True)
         items = [{"label": a.name, "url": a.image_url, "seed": a.name,
                   "command": lambda a=a: self._open_artist(a)} for a in artists]
         g.set_items(items, self.images)
+        self._search_view = g
         self._search_pane = "artists"
 
     def _populate_albums(self, albums):
-        self.search_results.pack_forget()
+        self._clear_search_view()
         g = ui.TileGrid(self.search_area, cols=5, tile_size=130)
         g.pack(fill="both", expand=True)
         items = [{"label": a.name, "url": a.image_url, "seed": a.name,
                   "sub": a.artists, "command": lambda a=a: self._open_album(a)}
                  for a in albums]
         g.set_items(items, self.images)
+        self._search_view = g
         self._search_pane = "albums"
 
     def _populate_playlists(self, playlists):
-        self.search_results.pack_forget()
+        self._clear_search_view()
         g = ui.TileGrid(self.search_area, cols=5, tile_size=130)
         g.pack(fill="both", expand=True)
         items = [{"label": p.name, "url": p.image_url, "seed": p.name,
@@ -651,6 +651,7 @@ class PermifyGUI:
                   "command": lambda p=p: self._open_playlist(p, p.name)}
                  for p in playlists]
         g.set_items(items, self.images)
+        self._search_view = g
         self._search_pane = "playlists"
 
     # ------------------------------------------------------------ artist
@@ -958,9 +959,6 @@ class PermifyGUI:
                 if self._changed("art", t.image_url):
                     self.images.attach(self.art, t.image_url, 96)
                     self.images.attach(self.mini_art, t.image_url, 52)
-                    self.images.attach_background(self.home_bd, t.image_url,
-                                                  self.home_bd.winfo_width() or 800,
-                                                  170)
                 if self._changed("liked", bool(t.liked)):
                     self.like_btn.config(text="♥" if t.liked else "♡",
                                          fg=ui.GREEN if t.liked else ui.MUTED)

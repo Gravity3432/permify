@@ -255,17 +255,24 @@ class Backdrop(tk.Canvas):
 
 
 class ScrollFrame(tk.Frame):
-    """A scrollable body that fills available space."""
+    """A scrollable body. Use as the main scroll area (default) or with a
+    fixed pixel height so it can sit among other widgets without collapsing."""
 
-    def __init__(self, master, bg=BG):
+    def __init__(self, master, bg=BG, height=None):
         super().__init__(master, bg=bg)
         self.canvas = tk.Canvas(self, bg=bg, highlightthickness=0, bd=0)
+        if height:
+            self.canvas.configure(height=height)
         sb = tk.Scrollbar(self, orient="vertical", command=self.canvas.yview,
                           bg=bg, troughcolor=bg, activebackground=ACCENT,
                           highlightthickness=0, width=8)
         self.canvas.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
-        self.canvas.pack(side="left", fill="both", expand=True)
+        if height:
+            self.canvas.pack(side="left", fill="x")
+            self.pack_propagate(False)
+        else:
+            self.canvas.pack(side="left", fill="both", expand=True)
         self.body = tk.Frame(self.canvas, bg=bg)
         self._win = self.canvas.create_window((0, 0), window=self.body, anchor="nw")
         self.body.bind("<Configure>",
@@ -273,10 +280,12 @@ class ScrollFrame(tk.Frame):
         self.canvas.bind("<Configure>", lambda e: self._sync_width())
         self.canvas.bind("<MouseWheel>", self._on_wheel)
         self.body.bind("<MouseWheel>", self._on_wheel)
-        self.canvas.bind_all_hold = None
 
     def _sync_width(self):
-        self.canvas.itemconfigure(self._win, width=self.canvas.winfo_width())
+        try:
+            self.canvas.itemconfigure(self._win, width=self.canvas.winfo_width())
+        except Exception:
+            pass
 
     def _on_wheel(self, e):
         try:
@@ -359,8 +368,8 @@ class TrackRow(tk.Frame):
 class TrackList(ScrollFrame):
     """Scrollable rich list of tracks."""
 
-    def __init__(self, master, bg=BG):
-        super().__init__(master, bg=bg)
+    def __init__(self, master, bg=BG, height=None):
+        super().__init__(master, bg=bg, height=height)
         self._rows = []
         self.on_play = None
         self.on_artist = None
@@ -411,19 +420,20 @@ class Tile(tk.Frame):
 class TileGrid(ScrollFrame):
     """Reflowing grid of cover tiles."""
 
-    def __init__(self, master, bg=BG, cols=4, tile_size=130):
-        super().__init__(master, bg=bg)
+    def __init__(self, master, bg=BG, cols=4, tile_size=130, height=None):
+        super().__init__(master, bg=bg, height=height)
         self._cols = cols
         self._tile_size = tile_size
         self._tiles = []
-        self.body.grid_columnconfigure(tuple(range(cols)), weight=1)
+        for c in range(cols):
+            self.body.grid_columnconfigure(c, weight=1)
 
     def set_items(self, items, cache):
         """items: list of dicts {label, url, sub, seed, command}."""
         self.clear()
         self._tiles = []
         cols = self._cols
-        for i, it in enumerate(items):
+        for i, it in enumerate(items[:MAX_ROWS]):
             t = Tile(self.body, cache, it.get("label", ""), it.get("url", ""),
                      it.get("seed", ""), self._tile_size,
                      it.get("command"), it.get("sub", ""))

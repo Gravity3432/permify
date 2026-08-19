@@ -186,7 +186,7 @@ def test_gui_builds_and_runs():
     app._update()
     # render paths
     app._fill_library([])
-    app._fill_home([], [], [], [])
+    app._fill_home([], [])
     # search categories
     app.search_entry.delete(0, "end")
     app.search_entry.insert(0, "neon")
