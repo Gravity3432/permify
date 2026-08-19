@@ -30,6 +30,11 @@ def test_demo_engine():
     assert e.artist_albums(e.top_artists()[0])
     assert e.lyrics_for(t)["lines"]
     assert e.devices()
+    # album / artist page data
+    a = e.top_artists()[0]
+    al = e.artist_albums(a)[0]
+    assert e.artist_top(a)
+    assert e.album_tracks(al.id, al)
     print("PASS demo engine")
 
 

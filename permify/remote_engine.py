@@ -104,6 +104,22 @@ class RemoteEngine:
     def album_tracks(self, album_id: str, album_meta=None):
         return self.catalog.album_tracks(album_id, album_meta)
 
+    def artist_albums(self, artist, cap: int = 50):
+        return self.catalog.artist_albums(getattr(artist, "id", artist), artist, cap)
+
+    def artist_info(self, artist):
+        return self.catalog.artist_info(artist)
+
+    def follow_artist(self, artist, flag: bool) -> bool:
+        return self.catalog.follow_artist(artist, flag)
+
+    def is_following_artist(self, artist) -> bool:
+        return self.catalog.is_following_artist(artist)
+
+    def queue_play(self, index: int) -> None:
+        # Remote mode can't reorder the queue (Spotify API limitation).
+        pass
+
     def set_liked(self, track: Track, flag: bool) -> bool:
         return self.catalog.set_liked(track, flag)
 

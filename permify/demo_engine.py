@@ -135,6 +135,19 @@ class DemoEngine:
         aid = getattr(artist, "id", None) or str(artist)
         return [BY_ALBUM[k] for k, v in ALBUMS.items() if v[1] == aid]
 
+    def artist_top(self, artist) -> List[Track]:
+        name = (getattr(artist, "name", "") or "").lower()
+        hit = [t for t in self._tracks if t.artists.lower() == name]
+        return hit or self._tracks[:5]
+
+    def album_tracks(self, album_id, album_meta=None) -> List[Track]:
+        uri = getattr(album_meta, "uri", None) or getattr(album_meta, "id", None)
+        aname = (getattr(album_meta, "name", "") or "").lower()
+        hit = [t for t in self._tracks
+               if (uri and t.album_uri == f"spotify:album:{album_id}")
+               or (aname and t.album.lower() == aname)]
+        return hit or self._tracks[:5]
+
     def artist_info(self, artist) -> Artist:
         aid = getattr(artist, "id", None) or str(artist)
         return BY_ARTIST.get(aid, Artist("", "", str(artist)))
