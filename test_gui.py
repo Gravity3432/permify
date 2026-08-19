@@ -141,6 +141,16 @@ class _Listbox(_Base):
         return 0
 
 
+class _Entry(_Base):
+    def get(self, *a, **k):
+        return ""
+
+
+class _BoolVar(_Base):
+    def get(self, *a, **k):
+        return False
+
+
 class _Tk(_Base):
     pass
 
@@ -153,6 +163,8 @@ def _fake_tk():
                  "PhotoImage"]:
         setattr(tk, name, type(name, (_Base,), {}))
     setattr(tk, "Listbox", _Listbox)
+    setattr(tk, "Entry", _Entry)
+    setattr(tk, "BooleanVar", _BoolVar)
     setattr(tk, "Tk", _Tk)
     return tk
 

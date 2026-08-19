@@ -202,7 +202,6 @@ class PermifyGUI:
                           activebackground=ui.BG)
             b.pack(side="left", padx=(0, 10))
             self.search_tabs[name] = b
-        self._search_cat("All", redraw=False)
 
         self.search_area = tk.Frame(f, bg=ui.BG)
         self.search_area.pack(fill="both", expand=True, padx=20, pady=(4, 12))
@@ -212,6 +211,7 @@ class PermifyGUI:
         self.search_results.on_artist = self._open_artist
         self.search_results.on_like = self._like_track
         self._search_pane = "tracks"
+        self._search_cat("All", redraw=False)
 
     def _build_library(self, f) -> None:
         self.lib_stack = ui.ScrollFrame(f)
