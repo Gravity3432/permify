@@ -21,7 +21,11 @@ distinct visual identity. Built on top of a battle-tested playback engine.
 
 ## 🚀 Run it
 
-**Make the app (`Permify.exe`):** double-click **`build.bat`** → get
+**Fastest on Windows — no build needed:** double-click **`run.bat`**. It
+auto-installs everything, walks you through the one-time login, and opens
+the app.
+
+**Make a standalone app (`Permify.exe`):** double-click **`build.bat`** → get
 `dist\Permify.exe`. Copy it anywhere, pin it to the taskbar.
 
 **From source (macOS / Linux / WSL):**
@@ -53,6 +57,7 @@ permify/
 ├── entry.py          # exe entry point
 ├── permify.spec      # PyInstaller config
 ├── build.bat         # one-click -> Permify.exe
+├── run.bat           # windows: just double-click to run
 ├── run.sh            # mac/linux launcher
 └── requirements.txt
 ```
